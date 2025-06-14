@@ -2,6 +2,8 @@
 
 An intelligent AI-powered agent for Kubernetes that helps DevOps engineers and developers manage cloud-native infrastructure through natural language interactions.
 
+![Screenshot from 2025-06-15 02-07-30](https://github.com/user-attachments/assets/84516ac4-325a-46e6-8d5c-5764db77ef24)
+
 ## 🎯 Vision
 
 KAI aims to democratize Kubernetes operations by providing an AI assistant that can:
