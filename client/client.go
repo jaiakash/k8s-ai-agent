@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -14,14 +15,77 @@ import (
 
 const (
 	MCPEndpoint = "http://localhost:8080/sse"
+
+	// ANSI color codes
+	colorReset  = "\033[0m"
+	colorGreen  = "\033[32m"
+	colorYellow = "\033[33m"
+	colorCyan   = "\033[36m"
+	colorRed    = "\033[31m"
 )
 
-// Add new function to format the prompt with pre-prompt
+type FormattedResponse struct {
+	Type    string `json:"type"`    // CMD, EXP, or FULL
+	Command string `json:"command"` // For CMD and FULL
+	Content string `json:"content"` // For EXP and FULL
+}
+
 func formatWithPrePrompt(userInput string) string {
-	// Define your pre-prompt
-	prePrompt := `You are a helpful AI assistant. Please provide clear and concise responses.
-Format your responses using markdown when appropriate.
-Keep your answers focused and relevant to the question.`
+	prePrompt := `You are a Kubernetes and Cloud Native expert AI assistant. Follow these steps:
+
+1. ANALYZE:
+   - Identify the requested operation scope (pod, deployment, service, etc.)
+   - Consider relevant Kubernetes concepts and CNCF tools
+   - Check for potential security implications
+   - Determine if this requires cluster-admin privileges
+
+2. RECOMMEND:
+   - Suggest appropriate kubectl or related commands
+   - Follow Kubernetes best practices
+   - Consider resource impact and safety
+   - Include necessary flags and options
+   - Provide proper namespace context if needed
+
+3. FORMAT RESPONSE AS:
+   - [CMD] format: Only return the command, example:
+     kubectl get pods -n default
+
+   - [EXP] format: Return markdown explanation, example:
+     # Pod List Operation
+     This command will list all pods in the default namespace.
+     * Requires: view permissions
+     * Impact: None (read-only operation)
+
+   - [FULL] format: Return both command and explanation, example:
+     ## Command:
+     kubectl get pods -n default
+
+     ## Explanation:
+     This command lists all pods...
+     
+4. SAFETY CHECKS:
+   - Highlight if command needs cluster-admin privileges
+   - Warn about potential service disruptions
+   - Suggest --dry-run=client when appropriate
+   - Include resource quotas consideration
+   - Mention any networking implications
+
+5. COMMAND CONVENTIONS:
+   - Always use long-form flags (--namespace instead of -n)
+   - Include namespace when relevant
+   - Add --context flag if multiple clusters
+   - Quote string values containing special characters
+   - Use proper resource abbreviations (po, svc, deploy)
+
+To specify output format, prefix your query with:
+[CMD] - for command only
+[EXP] - for explanation only
+[FULL] - for both command and explanation (default)
+
+Example queries:
+[CMD] scale frontend deployment to 3 replicas
+[EXP] create a nodeport service for nginx
+[FULL] delete all failed pods in kube-system namespace`
 
 	if prePrompt == "" {
 		return userInput
@@ -40,7 +104,6 @@ func main() {
 		log.Fatalf("failed to start MCP client: %v", err)
 	}
 
-	fmt.Printf("Initializing k8s mcp server...")
 	initRequest := mcp.InitializeRequest{}
 	initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
 	initRequest.Params.ClientInfo = mcp.Implementation{
@@ -54,7 +117,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to initialize MCP client: %v", err)
 	}
-	fmt.Printf("Initialized with server: %s %s\n", initResult.ServerInfo.Name, initResult.ServerInfo.Version)
+	fmt.Printf("Initialized %s %s\n", initResult.ServerInfo.Name, initResult.ServerInfo.Version)
 
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Println("\nEnter your prompts (type 'quit' to exit):")
@@ -89,8 +152,47 @@ func main() {
 			continue
 		}
 
+		// Replace the response handling section in the main loop
 		if toolResultPtr != nil {
-			fmt.Printf("\nResponse: %v\n", toolResultPtr.Content)
+			if len(toolResultPtr.Content) == 0 {
+				fmt.Println("No content in response.")
+				continue
+			}
+
+			textContent, ok := toolResultPtr.Content[0].(mcp.TextContent)
+			if !ok {
+				fmt.Printf("%sUnsupported content type. Expected TextContent.%s\n", colorRed, colorReset)
+				continue
+			}
+
+			var response FormattedResponse
+			if err := json.Unmarshal([]byte(textContent.Text), &response); err != nil {
+				fmt.Printf("\n%sError parsing response: %v%s\n", colorRed, err, colorReset)
+				fmt.Printf("Raw response: %s\n", textContent.Text)
+				continue
+			}
+
+			// Print formatted response based on type
+			switch response.Type {
+			case "CMD":
+				fmt.Printf("\n%sCommand:%s\n%s\n",
+					colorGreen, colorReset, response.Command)
+			case "EXP":
+				fmt.Printf("\n%sExplanation:%s\n%s\n",
+					colorYellow, colorReset, response.Content)
+			case "FULL":
+				if response.Command != "" {
+					fmt.Printf("\n%sCommand:%s\n%s\n",
+						colorGreen, colorReset, response.Command)
+				}
+				if response.Content != "" {
+					fmt.Printf("\n%sExplanation:%s\n%s\n",
+						colorYellow, colorReset, response.Content)
+				}
+			default:
+				fmt.Printf("\n%sUnexpected response type: %s%s\n",
+					colorCyan, response.Type, colorReset)
+			}
 		} else {
 			fmt.Println("No response received.")
 		}

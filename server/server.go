@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -23,15 +24,21 @@ type ollamaResponse struct {
 	Response string `json:"response"`
 }
 
-func callOllama(prompt string) (string, error) {
+type FormattedResponse struct {
+	Type    string `json:"type"`    // CMD, EXP, or FULL
+	Command string `json:"command"` // For CMD and FULL
+	Content string `json:"content"` // For EXP and FULL
+}
+
+func callOllama(prompt string) (*FormattedResponse, error) {
 	reqBody, _ := json.Marshal(ollamaRequest{
-		Model:  "deepseek-r1", // Change to your local model name
+		Model:  "deepseek-r1",
 		Prompt: prompt,
 	})
 
 	resp, err := http.Post("http://localhost:11434/api/generate", "application/json", bytes.NewReader(reqBody))
 	if err != nil {
-		return "", err
+		return nil, fmt.Errorf("ollama request failed: %v", err)
 	}
 	defer resp.Body.Close()
 
@@ -43,12 +50,47 @@ func callOllama(prompt string) (string, error) {
 			if err == io.EOF {
 				break
 			}
-			return "", err
+			return nil, fmt.Errorf("failed to decode response: %v", err)
 		}
 		fullResponse.WriteString(result.Response)
 	}
 
-	return fullResponse.String(), nil
+	// Parse the response to extract command/explanation
+	response := &FormattedResponse{}
+	rawResponse := fullResponse.String()
+
+	if strings.HasPrefix(rawResponse, "[CMD]") {
+		response.Type = "CMD"
+		response.Command = strings.TrimSpace(strings.TrimPrefix(rawResponse, "[CMD]"))
+	} else if strings.HasPrefix(rawResponse, "[EXP]") {
+		response.Type = "EXP"
+		response.Content = strings.TrimSpace(strings.TrimPrefix(rawResponse, "[EXP]"))
+	} else if strings.HasPrefix(rawResponse, "[FULL]") {
+		response.Type = "FULL"
+		// Remove the [FULL] prefix
+		content := strings.TrimPrefix(rawResponse, "[FULL]")
+
+		// Split into command and explanation if both exist
+		if strings.Contains(content, "## Explanation:") {
+			parts := strings.SplitN(content, "## Explanation:", 2)
+			// Clean up the command part
+			cmdPart := strings.TrimPrefix(parts[0], "## Command:")
+			response.Command = strings.TrimSpace(cmdPart)
+
+			if len(parts) > 1 {
+				response.Content = strings.TrimSpace(parts[1])
+			}
+		} else {
+			// If no explicit split, treat as command
+			response.Command = strings.TrimSpace(content)
+		}
+	} else {
+		// Default to FULL type for unformatted responses
+		response.Type = "FULL"
+		response.Content = rawResponse
+	}
+
+	return response, nil
 }
 
 func main() {
@@ -58,8 +100,8 @@ func main() {
 
 	// Create MCP server with basic capabilities
 	mcpServer := server.NewMCPServer(
-		"Ollama LLM Demo",
-		"1.0.0",
+		"K8s AI Agent (KAI)",
+		"0.0.1",
 		server.WithRecovery(),
 	)
 
@@ -76,11 +118,19 @@ func main() {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
+
 		output, err := callOllama(prompt)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		return mcp.NewToolResultText(output), nil
+
+		// Marshal the FormattedResponse to JSON
+		responseJSON, err := json.Marshal(output)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to marshal response: %v", err)), nil
+		}
+
+		return mcp.NewToolResultText(string(responseJSON)), nil
 	})
 
 	// Run server in appropriate mode based on the sseMode flag
