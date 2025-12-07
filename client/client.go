@@ -30,6 +30,10 @@ type FormattedResponse struct {
 	Content string `json:"content"` // For EXP and FULL
 }
 
+type SessionContext struct {
+	Namespace string
+}
+
 func formatWithPrePrompt(userInput string) string {
 	prePrompt := `You are a Kubernetes and Cloud Native expert AI assistant. Follow these steps:
 
@@ -94,6 +98,16 @@ Example queries:
 }
 
 func main() {
+	// Add a flag for default namespace
+	defaultNamespace := ""
+	if len(os.Args) > 1 {
+		for i, arg := range os.Args {
+			if (arg == "--namespace" || arg == "-n") && i+1 < len(os.Args) {
+				defaultNamespace = os.Args[i+1]
+			}
+		}
+	}
+
 	mcpClient, err := client.NewSSEMCPClient(MCPEndpoint)
 	if err != nil {
 		log.Fatalf("failed to create MCP client: %v", err)
@@ -119,12 +133,19 @@ func main() {
 	}
 	fmt.Printf("Initialized %s %s\n", initResult.ServerInfo.Name, initResult.ServerInfo.Version)
 
+	sessionCtx := &SessionContext{Namespace: defaultNamespace}
+
 	reader := bufio.NewReader(os.Stdin)
-	fmt.Println("\nEnter your prompts (type 'quit' to exit):")
+	fmt.Println("\nEnter your prompts (type 'quit' to exit, ':namespace <ns>' to change namespace):")
 
 	for {
-		fmt.Print("\n> ")
+		nsPrompt := ""
+		if sessionCtx.Namespace != "" {
+			nsPrompt = fmt.Sprintf(" [%s]", sessionCtx.Namespace)
+		}
+		fmt.Printf("\n%s> %s", colorCyan, nsPrompt)
 		userInput, err := reader.ReadString('\n')
+		fmt.Print(colorReset)
 		if err != nil {
 			log.Fatalf("Error reading input: %v", err)
 		}
@@ -135,8 +156,22 @@ func main() {
 			break
 		}
 
-		// Format the prompt with pre-prompt
-		formattedPrompt := formatWithPrePrompt(userInput)
+		// Namespace change command
+		if strings.HasPrefix(userInput, ":namespace ") {
+			ns := strings.TrimSpace(strings.TrimPrefix(userInput, ":namespace "))
+			if ns != "" {
+				sessionCtx.Namespace = ns
+				fmt.Printf("%sNamespace set to '%s'%s\n", colorGreen, ns, colorReset)
+			}
+			continue
+		}
+
+		// Add namespace context to prompt if set
+		formattedPrompt := userInput
+		if sessionCtx.Namespace != "" {
+			formattedPrompt = fmt.Sprintf("%s (namespace: %s)", userInput, sessionCtx.Namespace)
+		}
+		formattedPrompt = formatWithPrePrompt(formattedPrompt)
 
 		args := map[string]interface{}{
 			"prompt": formattedPrompt,
@@ -170,6 +205,16 @@ func main() {
 				fmt.Printf("\n%sError parsing response: %v%s\n", colorRed, err, colorReset)
 				fmt.Printf("Raw response: %s\n", textContent.Text)
 				continue
+			}
+
+			// Update session context if command contains --namespace
+			if response.Command != "" && strings.Contains(response.Command, "--namespace") {
+				parts := strings.Split(response.Command, "--namespace")
+				if len(parts) > 1 {
+					ns := strings.Fields(parts[1])[0]
+					sessionCtx.Namespace = ns
+					fmt.Printf("%s[Context] Namespace updated to: %s%s\n", colorCyan, ns, colorReset)
+				}
 			}
 
 			// Print formatted response based on type

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -9,6 +10,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -30,9 +33,28 @@ type FormattedResponse struct {
 	Content string `json:"content"` // For EXP and FULL
 }
 
+// SessionContext holds context for a CLI session (e.g., last used namespace)
+type SessionContext struct {
+	LastNamespace string
+}
+
+func getModelName() string {
+	// Try environment variable first
+	if model := os.Getenv("OLLAMA_MODEL"); model != "" {
+		return model
+	}
+	// Try model.txt file
+	data, err := os.ReadFile("model.txt")
+	if err == nil && strings.TrimSpace(string(data)) != "" {
+		return strings.TrimSpace(string(data))
+	}
+	// Fallback default
+	return "deepseek-r1"
+}
+
 func callOllama(prompt string) (*FormattedResponse, error) {
 	reqBody, _ := json.Marshal(ollamaRequest{
-		Model:  "deepseek-r1",
+		Model:  getModelName(),
 		Prompt: prompt,
 	})
 
@@ -93,10 +115,83 @@ func callOllama(prompt string) (*FormattedResponse, error) {
 	return response, nil
 }
 
+// runKubectlCommand executes a kubectl command and returns its output or error.
+func runKubectlCommand(cmdStr string) (string, error) {
+	args := strings.Fields(cmdStr)
+	if len(args) == 0 {
+		return "", fmt.Errorf("empty command")
+	}
+	cmd := exec.Command(args[0], args[1:]...)
+	output, err := cmd.CombinedOutput()
+	return string(output), err
+}
+
+// cliLoop provides a CLI for natural language to kubectl translation and execution.
+func cliLoop() {
+	fmt.Println("K8s AI Agent CLI (type 'exit' to quit)")
+	reader := bufio.NewReader(os.Stdin)
+	ctx := &SessionContext{}
+
+	for {
+		fmt.Print("> ")
+		input, _ := reader.ReadString('\n')
+		input = strings.TrimSpace(input)
+		if input == "exit" {
+			break
+		}
+		if input == "" {
+			continue
+		}
+
+		// Add context to prompt if available
+		prompt := input
+		if ctx.LastNamespace != "" {
+			prompt = fmt.Sprintf("%s (namespace: %s)", input, ctx.LastNamespace)
+		}
+
+		resp, err := callOllama(prompt)
+		if err != nil {
+			fmt.Printf("AI error: %v\n", err)
+			continue
+		}
+
+		// Show AI's response
+		if resp.Type == "CMD" || resp.Type == "FULL" {
+			fmt.Printf("AI suggests command: %s\n", resp.Command)
+			fmt.Print("Run this command? [y/N]: ")
+			confirm, _ := reader.ReadString('\n')
+			if strings.TrimSpace(strings.ToLower(confirm)) == "y" {
+				out, err := runKubectlCommand(resp.Command)
+				fmt.Println(out)
+				if err != nil {
+					fmt.Printf("Command error: %v\n", err)
+				}
+				// Update context if namespace is used
+				if strings.Contains(resp.Command, "-n ") {
+					parts := strings.Split(resp.Command, "-n ")
+					if len(parts) > 1 {
+						ns := strings.Fields(parts[1])[0]
+						ctx.LastNamespace = ns
+					}
+				}
+			}
+		}
+		if resp.Type == "EXP" || resp.Type == "FULL" {
+			fmt.Printf("Explanation: %s\n", resp.Content)
+		}
+	}
+}
+
 func main() {
 	// Parse command line flags
 	sseMode := flag.Bool("sse", true, "Run in SSE mode instead of stdio mode")
+	cliMode := flag.Bool("cli", false, "Run in CLI mode for natural language Kubernetes tasks")
 	flag.Parse()
+
+	if *cliMode {
+		cliLoop()
+		return
+	}
 
 	// Create MCP server with basic capabilities
 	mcpServer := server.NewMCPServer(
