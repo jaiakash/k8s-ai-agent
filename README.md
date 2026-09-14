@@ -63,6 +63,12 @@ model on the untrusted end of it.
 go install github.com/jaiakash/k8s-ai-agent/cmd/kai-mcp-server@latest
 ```
 
+Or use the published image, which is multi-architecture and signed:
+
+```bash
+docker pull ghcr.io/jaiakash/kai-mcp-server:latest
+```
+
 Add it to your MCP host. For Claude Code:
 
 ```bash
@@ -82,16 +88,8 @@ For Goose, or any host using the standard config format:
 }
 ```
 
-That is a read-only agent against your current kubeconfig context. Ask it
-things:
-
-> Why is the checkout service failing in staging?
-
-> Which pods have restarted most in the last hour?
-
-> Is anything unschedulable right now, and why?
-
-To let it make changes:
+That is a read-only agent against your current kubeconfig context. To let it
+make changes:
 
 ```bash
 kai-mcp-server --allow-writes
@@ -99,6 +97,77 @@ kai-mcp-server --allow-writes
 
 Writes still default to a dry run, and `kube-system`, `kube-public` and
 `kube-node-lease` stay read-only.
+
+## What you can do with it
+
+### Investigating
+
+The read surface is built around the questions people actually ask a cluster,
+not around the API groups it happens to have.
+
+> Why is the checkout service failing in staging?
+
+`list_pods` reports an `issue` for every unhealthy pod — `CrashLoopBackOff`,
+`ImagePullBackOff`, `Pending`, `Terminating` — and sorts those first, so the
+answer survives a long listing. `get_pod` then adds container states, restart
+counts, the previous termination reason and the pod's own events; a pod killed
+for memory comes back as `OOMKilled (exit 137)`, which is usually the whole
+answer. `get_pod_logs` with `previous=true` reads the container that actually
+died, since the current one's logs post-date the failure.
+
+> Nothing will schedule. What is holding it up?
+
+`list_events` with `warnings_only=true` surfaces the scheduling and probe
+failures that pod status alone does not explain — insufficient CPU, unbound
+claims, taints nothing tolerates. `list_nodes` shows readiness, cordon status
+and the pressure conditions behind them.
+
+> Are we about to run out of room?
+
+`top_nodes` and `top_pods` read live usage from metrics-server, against
+allocatable capacity rather than requests. When metrics-server is not
+installed, `cluster_info` says so up front instead of failing later.
+
+> What is this custom resource doing?
+
+`get_resource` returns any kind, CRDs included, and accepts the short names you
+already use — `deploy`, `po`, `svc` — resolved against the cluster's own
+discovery data.
+
+Three MCP prompts package the common investigations as reusable playbooks your
+host can surface as slash commands: `diagnose_pod`, `triage_namespace` and
+`capacity_review`.
+
+### Operating
+
+Every mutating tool asks the API server to rehearse the change first. The
+default is `dry_run=true`, which runs admission, validation, quota checks and
+webhooks and then discards the result — so an agent can report what *would*
+happen, and a human decides whether it happens.
+
+> Scale the workers to 10 for the backlog.
+
+`scale_deployment` goes through the `scale` subresource and returns the
+previous and new counts. `restart_deployment` does a rolling restart the same
+way `kubectl rollout restart` does, by stamping the pod template.
+
+> This node is misbehaving — stop scheduling onto it.
+
+`cordon_node` and `uncordon_node` mark a node unschedulable and back again.
+
+> Apply this manifest, but tell me what it changes first.
+
+`apply_manifest` server-side applies YAML or JSON, multiple documents included.
+Under a dry run the API server runs your admission controllers and webhooks
+against it, so the preview reflects what your cluster would really do rather
+than what the manifest says.
+
+`delete_pod` exists so a managed pod can be restarted; nothing here deletes a
+workload, and the RBAC the chart grants reflects that.
+
+Which of these exist at all is a deployment decision. Under the default
+read-only policy they are not registered, so they do not appear in `tools/list`
+and cannot be called.
 
 ## Tools
 
