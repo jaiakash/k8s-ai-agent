@@ -41,29 +41,6 @@ deployments.
 - Prometheus metrics for tool calls, denials and latency.
 - `PodDisruptionBudget` awareness before a restart or cordon.
 
-## AAIF integrations
-
-KAI already builds on [MCP](https://modelcontextprotocol.io),
-[AGENTS.md](https://agents.md), [agentgateway](https://agentgateway.dev) and
-[Goose](https://block.github.io/goose/). Two more are planned:
-
-### Agent Router
-
-An [Envoy-based AI gateway](https://aaif.io/projects) for model routing. KAI
-itself calls no model, so this is for the deployments that put a hosted agent
-in front of KAI: platform teams pick the model, handle failover and control
-cost, without KAI growing a provider abstraction it should not have.
-
-### A2A
-
-An [Agent2Agent](https://a2a-protocol.org) Agent Card, so KAI can be delegated
-to rather than only called. An incident-response agent should be able to hand
-off *"diagnose checkout-service in prod"* and get a structured finding back.
-
-This is where KAI stops being a tool server and becomes infrastructure other
-agents build on. It needs the diagnosis work above to be worth doing — an agent
-worth delegating to has to have something to say.
-
 ## Not planned
 
 Being clear about this saves everyone time:
