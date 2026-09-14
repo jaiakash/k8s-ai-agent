@@ -1,0 +1,32 @@
+KAI is installed as {{ include "kai.fullname" . }}.
+
+Mode: {{ if .Values.policy.allowWrites }}{{ if .Values.policy.dryRunOnly }}read-write, pinned to dry run{{ else }}READ-WRITE{{ end }}{{ else }}read-only{{ end }}
+RBAC: {{ .Values.rbac.scope }}-scoped{{ if .Values.policy.allowedNamespaces }} ({{ join ", " .Values.policy.allowedNamespaces }}){{ end }}
+
+{{- if eq .Values.server.transport "http" }}
+
+Reach it from inside the cluster at:
+
+  http://{{ include "kai.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}/mcp
+
+To try it from your laptop:
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "kai.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+
+then point an MCP host at http://127.0.0.1:{{ .Values.service.port }}/mcp
+{{- end }}
+
+This Service has no authentication of its own. Anyone who can reach the pod can
+call its tools with the ServiceAccount's permissions. For anything beyond a
+single trusted namespace, put an agentgateway in front of it for auth, rate
+limiting and audit — see deploy/agentgateway/ in the repository.
+
+{{- if .Values.policy.allowWrites }}
+
+Writes are ENABLED. The mutating tools still default to dry_run=true, and
+{{ join ", " .Values.policy.protectedNamespaces }} remain read-only.
+{{- end }}
+
+Check what the running instance allows:
+
+  kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "kai.fullname" . }} | grep policy
