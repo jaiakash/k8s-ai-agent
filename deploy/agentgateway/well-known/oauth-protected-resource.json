@@ -1,0 +1,16 @@
+{
+  "resource": "https://kai.your-company.example.com/mcp",
+  "resource_name": "KAI — Kubernetes AI Agent",
+  "authorization_servers": [
+    "https://your-idp.example.com"
+  ],
+  "scopes_supported": [
+    "kai:read",
+    "kai:logs",
+    "kai:write"
+  ],
+  "bearer_methods_supported": [
+    "header"
+  ],
+  "resource_documentation": "https://github.com/jaiakash/k8s-ai-agent"
+}

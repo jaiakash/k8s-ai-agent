@@ -130,6 +130,14 @@ func run() error {
 	mcpServer := server.NewMCPServer(
 		"kai",
 		version,
+		// Identity a host can show a human. `name` is the protocol handle and
+		// stays a stable slug; title is what a picker displays. Both are sent
+		// at initialize, so a host never has to hardcode either.
+		server.WithTitle("KAI — Kubernetes AI Agent"),
+		server.WithDescription(
+			"Investigate and operate a Kubernetes cluster: policy guardrails, "+
+				"RBAC pre-flight and server-side dry run. Read-only by default."),
+		server.WithWebsiteURL("https://github.com/jaiakash/k8s-ai-agent"),
 		server.WithInstructions(instructions),
 		server.WithToolCapabilities(false),
 		server.WithResourceCapabilities(false, false),

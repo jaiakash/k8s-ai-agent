@@ -39,8 +39,14 @@ internal/k8s/         client-go: reads, writes, metrics, RBAC pre-flight
 internal/policy/      operator guardrails, no client-go dependency
 internal/tools/       MCP tools, resources and prompts
 deploy/helm/kai/      chart with a least-privilege ServiceAccount
-deploy/agentgateway/  example gateway config for shared deployments
+deploy/agentgateway/  example gateway config, and where auth actually lives
+examples/             demonstrations only; nothing here ships in the binary
+docs/images/          README screenshots, regenerated from examples/
+server.json           MCP registry metadata; CI validates it against the schema
 ```
+
+`server.json`, `deploy/helm/kai/Chart.yaml` and the image tag all carry the
+version, and CI fails if they disagree. Bump them together.
 
 ## Rules that matter
 

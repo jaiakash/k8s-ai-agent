@@ -14,6 +14,29 @@ MCP — brings the model. KAI brings the cluster, with guardrails.
 └────────────────┘                    └──────────────┘               └────────────┘
 ```
 
+## What it looks like
+
+A crash loop, diagnosed by a 14B model running locally on one GPU. KAI holds no
+model, so this works the same under Claude Code or Goose — and the cluster data
+never leaves the machine:
+
+![A terminal session: the model calls list_pods, get_pod and get_pod_logs, finds OOMKilled (exit 137) and the heap warnings preceding it, and reports memory exhaustion as the root cause.](docs/images/diagnose-crash-loop.png)
+
+The model was never told how to investigate. `list_pods` surfaced the unhealthy
+pod first, `get_pod` carried the `OOMKilled (exit 137)` that actually explains
+the restart, and the server's own `instructions` are what told it to read the
+*previous* container's logs — the current container's would post-date the crash.
+
+The same host with `--allow-writes`, told in as many words to skip the preview
+and really do it:
+
+![A terminal session: the model calls delete_pod with dry_run false against kube-system, KAI refuses with "policy denied delete pods/coredns in namespace kube-system: namespace kube-system is protected; writes to it are refused", and the model relays the reason.](docs/images/policy-refusal.png)
+
+Nothing reached the API server. The refusal is a normal tool result, so the
+model explains it instead of failing — see
+[`examples/local-model-host/`](examples/local-model-host/) for the whole host,
+which is under 200 lines of standard library.
+
 ## Why it is built this way
 
 An agent with cluster access is only useful if you can bound what it does. KAI
@@ -177,8 +200,13 @@ KAI has no authentication of its own — it enforces *what* may be asked of a
 cluster, not *who* is asking. For a shared deployment, put an
 [agentgateway](https://agentgateway.dev) in front of it for JWT auth, per-tool
 authorization, rate limiting and tracing. A worked config is in
-[`deploy/agentgateway/`](deploy/agentgateway/config.yaml), including CEL rules
-that open the read tools to everyone and restrict writes to the platform team.
+[`deploy/agentgateway/`](deploy/agentgateway/README.md), including CEL rules
+that open the read tools to everyone and restrict writes to the platform team,
+and the OAuth Protected Resource Metadata (RFC 9728) that MCP clients use to
+discover your identity provider — served by the gateway, because that is what
+actually holds the tokens.
+
+Security policy and what counts as a vulnerability: [SECURITY.md](SECURITY.md).
 
 ## Remote transport
 

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -24,6 +24,17 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # server, so there is nothing else to ship. No shell is also a real mitigation
 # here — the whole point of this rewrite was to stop executing commands.
 FROM gcr.io/distroless/static-debian12:nonroot
+
+ARG VERSION=dev
+
+# Standard OCI annotations, so a registry, an SBOM scanner or a policy engine
+# can tell what this image is without a lookup table.
+LABEL org.opencontainers.image.title="kai-mcp-server" \
+      org.opencontainers.image.description="Kubernetes as MCP tools: policy guardrails, RBAC pre-flight, server-side dry run, read-only default." \
+      org.opencontainers.image.source="https://github.com/jaiakash/k8s-ai-agent" \
+      org.opencontainers.image.documentation="https://github.com/jaiakash/k8s-ai-agent/blob/main/README.md" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.version="${VERSION}"
 
 COPY --from=build /out/kai-mcp-server /usr/local/bin/kai-mcp-server
 
