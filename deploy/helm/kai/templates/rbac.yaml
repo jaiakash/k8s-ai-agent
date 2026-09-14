@@ -1,0 +1,126 @@
+{{- include "kai.validate" . -}}
+{{- if .Values.rbac.create }}
+{{- $readRules := list
+  (dict "apiGroups" (list "") "resources" (list "pods" "pods/log" "services" "events" "namespaces" "nodes" "configmaps" "persistentvolumeclaims" "serviceaccounts") "verbs" (list "get" "list" "watch"))
+  (dict "apiGroups" (list "apps") "resources" (list "deployments" "statefulsets" "daemonsets" "replicasets") "verbs" (list "get" "list" "watch"))
+  (dict "apiGroups" (list "batch") "resources" (list "jobs" "cronjobs") "verbs" (list "get" "list" "watch"))
+  (dict "apiGroups" (list "networking.k8s.io") "resources" (list "ingresses" "networkpolicies") "verbs" (list "get" "list" "watch"))
+  (dict "apiGroups" (list "metrics.k8s.io") "resources" (list "pods" "nodes") "verbs" (list "get" "list"))
+-}}
+{{/*
+Writes are granted only when policy.allowWrites is set, and only the specific
+verbs the write tools use. This is the outer of two rings: policy stops the
+server asking, RBAC stops the API server answering. A bug that bypassed policy
+would still hit this.
+
+Note pods carry "delete" but not "create" or "update": delete_pod exists so a
+managed pod can be restarted; KAI has no tool that authors a pod directly.
+Deployments get "patch" for restart and apply, and "deployments/scale" for
+scaling, but never "delete" — nothing here deletes a workload.
+*/}}
+{{- $writeRules := list
+  (dict "apiGroups" (list "") "resources" (list "pods") "verbs" (list "delete"))
+  (dict "apiGroups" (list "") "resources" (list "nodes") "verbs" (list "patch"))
+  (dict "apiGroups" (list "apps") "resources" (list "deployments") "verbs" (list "patch" "update"))
+  (dict "apiGroups" (list "apps") "resources" (list "deployments/scale") "verbs" (list "get" "update" "patch"))
+-}}
+{{- $rules := $readRules -}}
+{{- if .Values.policy.allowWrites -}}
+{{- $rules = concat $readRules $writeRules -}}
+{{- end -}}
+{{/*
+SelfSubjectAccessReview is always granted: it is how KAI reports a permissions
+problem before acting instead of after. It is self-scoped and confers nothing.
+*/}}
+{{- $rules = append $rules (dict "apiGroups" (list "authorization.k8s.io") "resources" (list "selfsubjectaccessreviews") "verbs" (list "create")) -}}
+
+{{- if eq .Values.rbac.scope "cluster" }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kai.fullname" . }}
+  labels:
+    {{- include "kai.labels" . | nindent 4 }}
+rules:
+{{ toYaml $rules }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "kai.fullname" . }}
+  labels:
+    {{- include "kai.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "kai.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kai.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+
+{{- else }}
+{{/*
+Namespaced scope grants one Role per allowed namespace. Cluster-scoped tools
+(list_nodes, top_nodes) will then be refused by RBAC, which is the intent:
+policy.allowedNamespaces already denies cluster-scoped actions.
+
+SelfSubjectAccessReview still needs a cluster binding, since the review itself
+is not namespaced.
+*/}}
+{{- range $ns := .Values.policy.allowedNamespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "kai.fullname" $ }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "kai.labels" $ | nindent 4 }}
+rules:
+{{ toYaml $rules }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "kai.fullname" $ }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "kai.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "kai.fullname" $ }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kai.serviceAccountName" $ }}
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kai.fullname" . }}-selfcheck
+  labels:
+    {{- include "kai.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["authorization.k8s.io"]
+    resources: ["selfsubjectaccessreviews"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "kai.fullname" . }}-selfcheck
+  labels:
+    {{- include "kai.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "kai.fullname" . }}-selfcheck
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kai.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,129 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race -count=1 -coverprofile=coverage.out ./...
+
+      - name: Coverage summary
+        run: go tool cover -func=coverage.out | tail -1
+
+      - name: Verify go.mod is tidy
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
+      - name: Build
+        run: go build ./...
+
+      # The server must start, speak MCP and shut down without a cluster
+      # reachable only through a stub. This catches wiring breaks in main.go
+      # that unit tests cannot see.
+      - name: Smoke test the binary
+        run: |
+          go build -o /tmp/kai ./cmd/kai-mcp-server
+          /tmp/kai --version
+
+  govulncheck:
+    name: Vulnerability scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+      - run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - run: govulncheck ./...
+
+  helm:
+    name: Lint chart
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - run: helm lint deploy/helm/kai
+      # Render both modes: the RBAC template branches on allowWrites, so the
+      # read-only path alone would not exercise it.
+      - run: helm template kai deploy/helm/kai
+      - run: helm template kai deploy/helm/kai --set policy.allowWrites=true
+
+  metadata:
+    name: Validate server.json
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --quiet check-jsonschema
+
+      # server.json is what the MCP registry and any client reading it will
+      # parse. A typo here is invisible locally and breaks publishing.
+      - name: Validate against the published schema
+        run: |
+          check-jsonschema --schemafile \
+            https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json \
+            server.json
+
+      # Three files state the version. They drift silently otherwise, and a
+      # registry entry pointing at an image tag that was never pushed is worse
+      # than no entry at all.
+      - name: Versions agree
+        run: |
+          server_json=$(python3 -c "import json;print(json.load(open('server.json'))['version'])")
+          pkg=$(python3 -c "import json;print(json.load(open('server.json'))['packages'][0]['version'])")
+          chart=$(grep '^appVersion:' deploy/helm/kai/Chart.yaml | cut -d'"' -f2)
+          echo "server.json=$server_json package=$pkg chart appVersion=$chart"
+          if [ "$server_json" != "$chart" ] || [ "$pkg" != "$chart" ]; then
+            echo "::error::version mismatch between server.json and the Helm chart"
+            exit 1
+          fi
+
+  docker:
+    name: Build image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -1,0 +1,53 @@
+# KAI configuration.
+#
+# Every value here has a safe default, so this whole file is optional. Pass it
+# with --config, or set the matching KAI_* environment variable, or use a flag.
+# Precedence: flags > environment > this file > defaults.
+
+server:
+  # stdio: the MCP host launches KAI as a subprocess. This is the default and
+  #   what Claude Code, Goose and Cursor expect for a local server.
+  # http:  Streamable HTTP, the current MCP remote transport, for a shared
+  #   deployment. The deprecated HTTP+SSE transport is not supported.
+  transport: stdio          # KAI_TRANSPORT
+  addr: ":8080"             # KAI_ADDR         (http transport only)
+  stateless: false          # KAI_STATELESS    (set true for >1 replica)
+  logLevel: info            # KAI_LOG_LEVEL    debug | info | warn | error
+
+kubernetes:
+  # Empty prefers in-cluster credentials, then $KUBECONFIG, then ~/.kube/config.
+  kubeconfig: ""            # KAI_KUBECONFIG
+  context: ""               # KAI_CONTEXT
+  qps: 20
+  burst: 40
+
+policy:
+  # The master switch. While false, mutating tools are not registered at all:
+  # a host connecting to this server cannot see them, let alone call them.
+  allowWrites: false        # KAI_ALLOW_WRITES
+
+  # Permit writes, but force every one to be a server-side dry run. Good for
+  # "let the agent propose changes and have a human apply them".
+  dryRunOnly: false         # KAI_DRY_RUN_ONLY
+
+  # Readable, but never writable.
+  protectedNamespaces:      # KAI_PROTECTED_NAMESPACES (comma-separated)
+    - kube-system
+    - kube-public
+    - kube-node-lease
+
+  # When non-empty, an allowlist: every action must target one of these, and
+  # cluster-scoped tools (list_nodes, top_nodes) are refused.
+  allowedNamespaces: []     # KAI_ALLOWED_NAMESPACES
+
+  # Invisible to KAI entirely, reads included.
+  deniedNamespaces: []      # KAI_DENIED_NAMESPACES
+
+  # Caps get_pod_logs so one tool call cannot swallow the model's context.
+  maxLogLines: 500          # KAI_MAX_LOG_LINES
+
+  # Pre-flight each action with a SelfSubjectAccessReview, so a permissions
+  # problem is reported before anything is attempted rather than as a 403
+  # afterwards. Turn this off only if the ServiceAccount cannot create
+  # SelfSubjectAccessReviews; you lose the clear error, not the enforcement.
+  enforceRBAC: true         # KAI_ENFORCE_RBAC

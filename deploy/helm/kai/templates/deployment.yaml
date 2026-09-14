@@ -1,0 +1,90 @@
+{{- include "kai.validate" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kai.fullname" . }}
+  labels:
+    {{- include "kai.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "kai.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        # Restart on a policy change: the tool set and the RBAC the server
+        # relies on are both derived from it.
+        checksum/config: {{ toYaml .Values.policy | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "kai.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "kai.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: kai
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --transport={{ .Values.server.transport }}
+            - --addr={{ .Values.server.addr }}
+            - --log-level={{ .Values.server.logLevel }}
+          env:
+            # Policy travels as environment variables so this chart needs no
+            # ConfigMap and no volume; the container filesystem stays read-only.
+            - name: KAI_ALLOW_WRITES
+              value: {{ .Values.policy.allowWrites | quote }}
+            - name: KAI_DRY_RUN_ONLY
+              value: {{ .Values.policy.dryRunOnly | quote }}
+            - name: KAI_ENFORCE_RBAC
+              value: {{ .Values.policy.enforceRBAC | quote }}
+            - name: KAI_MAX_LOG_LINES
+              value: {{ .Values.policy.maxLogLines | quote }}
+            - name: KAI_PROTECTED_NAMESPACES
+              value: {{ join "," .Values.policy.protectedNamespaces | quote }}
+            - name: KAI_ALLOWED_NAMESPACES
+              value: {{ join "," .Values.policy.allowedNamespaces | quote }}
+            - name: KAI_DENIED_NAMESPACES
+              value: {{ join "," .Values.policy.deniedNamespaces | quote }}
+            - name: KAI_STATELESS
+              value: {{ .Values.server.stateless | quote }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          # The server refuses to start unless it can reach the API server, so
+          # a running process is a working one. There is no separate health
+          # endpoint to probe; a TCP check is the honest signal.
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

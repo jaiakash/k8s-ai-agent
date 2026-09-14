@@ -1,0 +1,30 @@
+# Build output. Anchored with a leading slash: an unanchored "kai-mcp-server"
+# would also match the cmd/kai-mcp-server/ source directory.
+/bin/
+/dist/
+/kai-mcp-server
+
+# Test and coverage
+coverage.out
+coverage.html
+*.test
+
+# Local configuration — config.example.yaml is the committed template.
+# Anchored so it does not swallow deploy/agentgateway/config.yaml.
+/config.yaml
+*.local.yaml
+/jwks.json
+
+# Credentials: never commit these. These stay unanchored on purpose — a
+# stray kubeconfig or private key is dangerous at any depth.
+kubeconfig
+kubeconfig.yaml
+*.kubeconfig
+*.pem
+*.key
+
+# Editors
+.idea/
+.vscode/
+*.swp
+.DS_Store

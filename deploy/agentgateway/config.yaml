@@ -1,0 +1,86 @@
+# yaml-language-server: $schema=https://agentgateway.dev/schema/config
+#
+# agentgateway in front of KAI.
+#
+# KAI itself has no authentication: it enforces what *may* be asked of a
+# cluster, not *who* is asking. Those are different problems, and an MCP server
+# that tries to solve both ends up doing neither well. agentgateway supplies
+# the identity half — JWT verification, per-tool authorization, rate limits and
+# traces — so KAI keeps only the Kubernetes half.
+#
+# Run KAI behind it:
+#   kai-mcp-server --transport http --addr 127.0.0.1:8080 --allow-writes
+#   agentgateway -f deploy/agentgateway/config.yaml
+#
+# Then point MCP hosts at http://localhost:3000/mcp instead of KAI directly.
+# Bind KAI to 127.0.0.1 so the gateway is the only way in.
+
+frontendPolicies:
+  tracing:
+    host: localhost:4317
+    randomSampling: true
+
+mcp:
+  port: 3000
+
+  policies:
+    cors:
+      allowOrigins:
+        - "*"
+      allowHeaders:
+        - mcp-protocol-version
+        - content-type
+        - authorization
+      exposeHeaders:
+        - "Mcp-Session-Id"
+
+    # Every caller must present a valid token. Replace this with your own
+    # issuer and JWKS endpoint.
+    jwtAuth:
+      issuer: https://your-idp.example.com
+      audiences:
+        - kai.your-company.example.com
+      jwks:
+        file: ./jwks.json
+
+    # Per-tool authorization, evaluated against the caller's JWT claims.
+    #
+    # This is the layer KAI cannot provide: KAI knows a request is permitted
+    # for the credentials it holds, but it does not know who asked. Here the
+    # read tools are open to any authenticated user, while anything that
+    # changes the cluster is restricted to the platform team.
+    #
+    # Rules are CEL expressions; a request is allowed if any rule matches.
+    mcpAuthorization:
+      rules:
+        # Read-only tools: any authenticated caller.
+        - 'mcp.tool.name in ["cluster_info", "list_namespaces", "list_pods", "get_pod", "list_events", "list_deployments", "list_services", "list_nodes", "get_resource", "top_pods", "top_nodes"]'
+
+        # Logs can contain secrets, tokens and customer data. Treat them as
+        # more sensitive than the rest of the read surface.
+        - 'mcp.tool.name == "get_pod_logs" && "sre" in jwt.groups'
+
+        # Mutating tools: platform team only.
+        - 'mcp.tool.name in ["scale_deployment", "restart_deployment", "delete_pod", "cordon_node", "uncordon_node", "apply_manifest"] && "platform" in jwt.groups'
+
+  targets:
+    - name: kai
+      mcp:
+        host: http://127.0.0.1:8080/mcp
+
+---
+# A second bind adds a rate limit in front of the same backend. Tool calls are
+# cheap for a human and very cheap for an agent in a retry loop; a cap keeps a
+# confused agent from hammering the API server.
+binds:
+  - port: 3001
+    listeners:
+      - protocol: HTTP
+        routes:
+          - policies:
+              localRateLimit:
+                - maxTokens: 120
+                  tokensPerFill: 120
+                  fillInterval: 60s
+            backends:
+              - host: 127.0.0.1:8080

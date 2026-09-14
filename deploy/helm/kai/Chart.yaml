@@ -1,0 +1,18 @@
+apiVersion: v2
+name: kai
+description: KAI — a Kubernetes MCP server that exposes cluster operations as tools for AI agents
+type: application
+version: 0.2.0
+appVersion: "0.2.0"
+keywords:
+  - kubernetes
+  - mcp
+  - model-context-protocol
+  - ai-agent
+  - devops
+home: https://github.com/jaiakash/k8s-ai-agent
+sources:
+  - https://github.com/jaiakash/k8s-ai-agent
+maintainers:
+  - name: Akash Jaiswal
+    url: https://github.com/jaiakash

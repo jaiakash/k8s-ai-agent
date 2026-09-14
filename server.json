@@ -1,0 +1,87 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.jaiakash/kai-mcp-server",
+  "title": "KAI — Kubernetes AI Agent",
+  "description": "Kubernetes as MCP tools: policy guardrails, RBAC pre-flight, server-side dry run, read-only default.",
+  "version": "0.2.0",
+  "websiteUrl": "https://github.com/jaiakash/k8s-ai-agent",
+  "repository": {
+    "url": "https://github.com/jaiakash/k8s-ai-agent",
+    "source": "github",
+    "id": "1002138678"
+  },
+  "packages": [
+    {
+      "registryType": "oci",
+      "registryBaseUrl": "https://ghcr.io",
+      "identifier": "ghcr.io/jaiakash/kai-mcp-server",
+      "version": "0.2.0",
+      "runtimeHint": "docker",
+      "runtimeArguments": [
+        {
+          "type": "named",
+          "name": "--volume",
+          "description": "Mount a kubeconfig into the container. KAI reads the cluster with these credentials and never writes to the file.",
+          "value": "{kubeconfig_path}:/home/nonroot/.kube/config:ro",
+          "variables": {
+            "kubeconfig_path": {
+              "description": "Absolute path to your kubeconfig on the host.",
+              "default": "~/.kube/config",
+              "isRequired": true
+            }
+          }
+        }
+      ],
+      "packageArguments": [
+        {
+          "type": "named",
+          "name": "--transport",
+          "description": "MCP transport. Use stdio when the host launches the server itself.",
+          "value": "stdio"
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "KAI_ALLOW_WRITES",
+          "description": "Register the mutating tools. Off by default: KAI is read-only unless you ask otherwise. Writes still default to a server-side dry run, and protected namespaces stay read-only.",
+          "default": "false",
+          "isRequired": false
+        },
+        {
+          "name": "KAI_DRY_RUN_ONLY",
+          "description": "Force every permitted write to execute as a server-side dry run, so the agent can propose changes a human applies.",
+          "default": "false",
+          "isRequired": false
+        },
+        {
+          "name": "KAI_ALLOWED_NAMESPACES",
+          "description": "Comma-separated namespace allowlist. When set, every action must target one of these namespaces and cluster-scoped actions are refused.",
+          "isRequired": false
+        }
+      ],
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://{hostname}/mcp",
+      "headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer token issued by your own identity provider. KAI has no authentication of its own; a shared deployment is fronted by agentgateway, which verifies the token and authorizes per tool.",
+          "isSecret": true,
+          "isRequired": true
+        }
+      ],
+      "variables": {
+        "hostname": {
+          "description": "Host of your agentgateway in front of KAI.",
+          "isRequired": true
+        }
+      }
+    }
+  ]
+}
